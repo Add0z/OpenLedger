@@ -90,11 +90,9 @@ export async function getSpreadsheetRevision(
   accessToken: string,
   spreadsheetId: string
 ): Promise<number> {
-  const drive = google.drive({ version: "v3", auth: (() => {
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials({ access_token: accessToken });
-    return auth;
-  })() });
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: accessToken });
+  const drive = google.drive({ version: "v3", auth });
 
   const response = await drive.files.get({
     fileId: spreadsheetId,
