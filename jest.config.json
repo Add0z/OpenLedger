@@ -1,0 +1,27 @@
+{
+  "preset": "ts-jest",
+  "testEnvironment": "node",
+  "moduleNameMapper": {
+    "^@/(.*)$": "<rootDir>/src/$1"
+  },
+  "testMatch": ["**/__tests__/**/*.test.ts"],
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(uuid)/)"
+  ],
+  "transform": {
+    "^.+\\.tsx?$": ["ts-jest", {
+      "tsconfig": {
+        "module": "commonjs",
+        "esModuleInterop": true,
+        "jsx": "react-jsx"
+      }
+    }],
+    "^.+\\.js$": ["ts-jest", {
+      "tsconfig": {
+        "module": "commonjs",
+        "esModuleInterop": true,
+        "allowJs": true
+      }
+    }]
+  }
+}
