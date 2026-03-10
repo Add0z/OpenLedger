@@ -163,6 +163,7 @@ export async function createYearSpreadsheet(
     "Budgets",
     "Transactions",
     "Entries",
+    "Expenses",
     "QuickAdd",
     "Config",
     "AuditLog",
@@ -197,8 +198,8 @@ async function initializeSpreadsheetHeaders(
 ): Promise<void> {
   const headers: Array<{ range: string; values: string[][] }> = [
     {
-      range: "Accounts!A1:E1",
-      values: [["id", "name", "type", "currency", "active"]],
+      range: "Accounts!A1:F1",
+      values: [["id", "name", "type", "currency", "active", "initial_balance"]],
     },
     {
       range: "Categories!A1:D1",
@@ -223,6 +224,10 @@ async function initializeSpreadsheetHeaders(
     {
       range: "QuickAdd!A1:E1",
       values: [["date", "description", "account", "category", "amount"]],
+    },
+    {
+      range: "Expenses!A1:H1",
+      values: [["id", "date", "description", "account_id", "category_id", "amount", "currency", "created_at"]],
     },
     {
       range: "Config!A1:B1",

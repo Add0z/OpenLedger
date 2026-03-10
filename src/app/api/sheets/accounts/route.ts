@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth/options";
 import { getAccounts, addAccount } from "@/lib/sheets/accounts";
 import { logAuditEvent } from "@/lib/sheets/audit";
 import { validateAccount } from "@/lib/domain/validation";
+import { parseAmount } from "@/lib/domain/accounting";
 import { v4 as uuidv4 } from "uuid";
 
 export async function GET(req: NextRequest) {
@@ -41,15 +42,22 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     validateAccount(body);
 
+    // Parse initial balance — accepts decimal string (e.g. "1500.00") → integer cents
+    const initialBalance = body.initialBalance
+      ? parseAmount(String(body.initialBalance))
+      : 0;
+
     const account = {
       id: uuidv4(),
       name: body.name,
       type: body.type,
       currency: body.currency,
       active: body.active !== false,
+      initialBalance,
     };
 
     await addAccount(session.accessToken, spreadsheetId, account);
+
     await logAuditEvent(
       session.accessToken,
       spreadsheetId,
@@ -65,3 +73,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
