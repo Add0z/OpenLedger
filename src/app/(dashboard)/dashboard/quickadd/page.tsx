@@ -17,22 +17,28 @@ import {
   TableBody,
   CircularProgress,
   Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import FlashOnIcon from "@mui/icons-material/FlashOn";
 import AddIcon from "@mui/icons-material/Add";
 import { useSpreadsheet } from "@/components/layout/AppLayout";
-import { QuickAddRow } from "@/lib/domain/types";
-import { formatAmount } from "@/lib/domain/accounting";
+import { QuickAddRow, Account, Category } from "@/lib/domain/types";
+import { formatAmount, parseAmount } from "@/lib/domain/accounting";
 
 export default function QuickAddPage() {
   const { spreadsheetId } = useSpreadsheet();
   const [rows, setRows] = useState<QuickAddRow[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [form, setForm] = useState({
-    date: new Date().toISOString().split("T")[0],
+    date: "", // Start empty to prevent hydration mismatch
     description: "",
     account: "",
     category: "",
@@ -43,20 +49,34 @@ export default function QuickAddPage() {
   const loadRows = () => {
     if (!spreadsheetId) return;
     setLoading(true);
-    fetch(`/api/sheets/quickadd?spreadsheetId=${spreadsheetId}`)
-      .then((r) => r.json())
-      .then((data) => setRows(data.rows ?? []))
-      .catch(() => setError("Failed to load QuickAdd rows"))
+    Promise.all([
+      fetch(`/api/sheets/quickadd?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
+      fetch(`/api/sheets/accounts?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
+      fetch(`/api/sheets/categories?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
+    ])
+      .then(([quickAddData, accountData, categoryData]) => {
+        setRows(quickAddData.rows ?? []);
+        setAccounts(accountData.accounts ?? []);
+        setCategories(categoryData.categories ?? []);
+      })
+      .catch(() => setError("Failed to load QuickAdd data"))
       .finally(() => setLoading(false));
   };
 
-  useEffect(loadRows, [spreadsheetId]);
+  useEffect(() => {
+    loadRows();
+    // Set today's date after mount to avoid hydration mismatch
+    setForm((prev) => ({
+      ...prev,
+      date: new Date().toISOString().split("T")[0],
+    }));
+  }, [spreadsheetId]);
 
   const handleAdd = async () => {
     setSaving(true);
     setError("");
     try {
-      const amount = parseInt(form.amount.replace(/[^0-9-]/g, ""), 10);
+      const amount = parseAmount(form.amount);
       const res = await fetch(`/api/sheets/quickadd?spreadsheetId=${spreadsheetId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -67,13 +87,13 @@ export default function QuickAddPage() {
         setError(data.error ?? "Failed to add row");
         return;
       }
-      setForm({
+      setForm((prev) => ({
         date: new Date().toISOString().split("T")[0],
         description: "",
-        account: "",
-        category: "",
+        account: prev.account,
+        category: prev.category,
         amount: "",
-      });
+      }));
       loadRows();
     } catch {
       setError("Failed to add row");
@@ -97,7 +117,7 @@ export default function QuickAddPage() {
         setError(data.error ?? "Failed to process");
         return;
       }
-      setSuccess(`Processed ${data.processed} transaction(s) successfully`);
+      setSuccess(`Processed ${data.processed} expense(s) successfully`);
       loadRows();
     } catch {
       setError("Failed to process rows");
@@ -105,6 +125,10 @@ export default function QuickAddPage() {
       setProcessing(false);
     }
   };
+
+  const getAccountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? id;
+  const getAccountCurrency = (id: string) => accounts.find((a) => a.id === id)?.currency ?? "USD";
+  const getCategoryName = (id: string) => categories.find((c) => c.id === id)?.name ?? id;
 
   return (
     <Box>
@@ -124,8 +148,8 @@ export default function QuickAddPage() {
       </Stack>
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        Add quick entries here. When you click &quot;Process All&quot;, each row is converted into a
-        double-entry transaction and written to the Transactions and Entries sheets.
+        Add quick entries here. When you click &quot;Process All&quot;, each row is converted into an
+        expense and written to the Expenses sheet.
         The QuickAdd sheet is then cleared.
       </Alert>
 
@@ -153,25 +177,49 @@ export default function QuickAddPage() {
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
               sx={{ flexGrow: 1, minWidth: 180 }}
             />
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <InputLabel>Account</InputLabel>
+              <Select
+                label="Account"
+                value={form.account}
+                onChange={(e) => setForm((f) => ({ ...f, account: e.target.value as string }))}
+              >
+                {accounts.map((a) => (
+                  <MenuItem key={a.id} value={a.id}>
+                    {a.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <InputLabel>Category</InputLabel>
+              <Select
+                label="Category"
+                value={form.category}
+                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value as string }))}
+              >
+                {categories.map((c) => (
+                  <MenuItem key={c.id} value={c.id}>
+                    {c.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <TextField
-              label="Account"
-              size="small"
-              value={form.account}
-              onChange={(e) => setForm((f) => ({ ...f, account: e.target.value }))}
-              sx={{ minWidth: 150 }}
-            />
-            <TextField
-              label="Category"
-              size="small"
-              value={form.category}
-              onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-              sx={{ minWidth: 150 }}
-            />
-            <TextField
-              label="Amount (cents)"
+              label="Amount"
               size="small"
               value={form.amount}
-              onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+              onChange={(e) => {
+                let val = e.target.value.replace(/\D/g, ""); // strip non-digits
+                if (!val) {
+                  setForm((f) => ({ ...f, amount: "" }));
+                  return;
+                }
+                const num = parseInt(val, 10);
+                const formatted = (num / 100).toFixed(2);
+                setForm((f) => ({ ...f, amount: formatted }));
+              }}
+              placeholder="0.00"
               sx={{ minWidth: 140 }}
             />
             <Button
@@ -224,10 +272,10 @@ export default function QuickAddPage() {
                     <TableRow key={i}>
                       <TableCell>{row.date}</TableCell>
                       <TableCell>{row.description}</TableCell>
-                      <TableCell>{row.account}</TableCell>
-                      <TableCell>{row.category}</TableCell>
+                      <TableCell>{getAccountName(row.account)}</TableCell>
+                      <TableCell>{getCategoryName(row.category)}</TableCell>
                       <TableCell align="right">
-                        {formatAmount(row.amount, "USD")}
+                        {formatAmount(row.amount, getAccountCurrency(row.account))}
                       </TableCell>
                     </TableRow>
                   ))

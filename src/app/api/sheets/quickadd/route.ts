@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/options";
-import { getQuickAddRows, addQuickAddRow, processQuickAddRow, clearQuickAddRows } from "@/lib/sheets/quickadd";
-import { addTransaction } from "@/lib/sheets/transactions";
-import { addEntries } from "@/lib/sheets/entries";
+import { getQuickAddRows, addQuickAddRow, clearQuickAddRows } from "@/lib/sheets/quickadd";
+import { addExpense } from "@/lib/sheets/expenses";
 import { logAuditEvent } from "@/lib/sheets/audit";
+import { v4 as uuidv4 } from "uuid";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -41,40 +41,44 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     if (body.action === "process") {
-      // Process QuickAdd rows into transactions
+      // Process QuickAdd rows into expenses
       const rows = await getQuickAddRows(session.accessToken, spreadsheetId);
       const results = [];
 
       for (const row of rows) {
         if (!row.date || !row.account || !row.amount) continue;
 
-        const txWithEntries = processQuickAddRow(
-          row,
-          body.accountId ?? row.account,
-          body.offsetAccountId ?? row.category,
-          body.currency ?? "USD",
-          session.user?.email ?? "unknown"
-        );
+        const expenseId = uuidv4();
+        const expense = {
+          id: expenseId,
+          date: row.date,
+          description: row.description,
+          account_id: body.accountId ?? row.account,
+          category_id: body.offsetAccountId ?? row.category,
+          amount: row.amount, // stored in cents
+          currency: body.currency ?? "USD", // Note: The front-end needs to send this if dynamic
+          created_at: new Date().toISOString(),
+        };
 
-        await addTransaction(session.accessToken, spreadsheetId, txWithEntries.transaction);
-        await addEntries(session.accessToken, spreadsheetId, txWithEntries.entries);
+        await addExpense(session.accessToken, spreadsheetId, expense);
+
         await logAuditEvent(
           session.accessToken,
           spreadsheetId,
           "CREATE_FROM_QUICKADD",
-          "Transaction",
-          txWithEntries.transaction.id,
+          "Expense",
+          expenseId,
           session.user?.email ?? "unknown"
         );
 
-        results.push(txWithEntries);
+        results.push(expense);
       }
 
       if (rows.length > 0) {
         await clearQuickAddRows(session.accessToken, spreadsheetId, rows.length + 1);
       }
 
-      return NextResponse.json({ processed: results.length, transactions: results });
+      return NextResponse.json({ processed: results.length, expenses: results });
     }
 
     // Add a new QuickAdd row
