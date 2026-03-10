@@ -1,4 +1,4 @@
-import { Account, Category, Transaction, Entry, Budget } from "./types";
+import { Account, Category, Transaction, Entry, Budget, Expense } from "./types";
 
 /** Validates that a required string field is not empty */
 export function requireField(value: string | undefined | null, name: string): string {
@@ -23,10 +23,26 @@ export function validateDate(date: string): string {
 /** Validates an Account object */
 export function validateAccount(account: Partial<Account>): void {
   requireField(account.name, "Account name");
-  if (!["asset", "liability", "income", "expense", "equity"].includes(account.type ?? "")) {
+  if (!["savings", "checking", "investment"].includes(account.type ?? "")) {
     throw new Error(`Invalid account type: "${account.type}"`);
   }
   requireField(account.currency, "Account currency");
+}
+
+/** Validates an Expense object */
+export function validateExpense(expense: Partial<Expense>): void {
+  requireField(expense.description, "Expense description");
+  if (expense.date) {
+    validateDate(expense.date);
+  } else {
+    throw new Error("Expense date is required");
+  }
+  requireField(expense.account_id, "Expense account_id");
+  requireField(expense.category_id, "Expense category_id");
+  requireField(expense.currency, "Expense currency");
+  if (!Number.isInteger(expense.amount) || expense.amount === 0) {
+    throw new Error(`Expense amount must be a non-zero integer, got: ${expense.amount}`);
+  }
 }
 
 /** Validates a Category object */

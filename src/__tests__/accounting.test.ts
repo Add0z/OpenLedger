@@ -4,8 +4,10 @@ import {
   formatAmount,
   parseAmount,
   createOpeningBalanceTransaction,
+  computeAccountBalances,
+  computeMonthlyExpenses,
 } from "@/lib/domain/accounting";
-import { Entry } from "@/lib/domain/types";
+import { Account, Entry, Expense, Transaction } from "@/lib/domain/types";
 
 describe("validateDoubleEntry", () => {
   it("returns true when entries sum to zero", () => {
@@ -127,8 +129,8 @@ describe("parseAmount", () => {
     expect(parseAmount("1,234.56")).toBe(123456);
   });
 
-  it("throws on invalid input", () => {
-    expect(() => parseAmount("abc")).toThrow("Invalid amount");
+  it("returns 0 on invalid input instead of throwing to prevent grid crashes", () => {
+    expect(parseAmount("abc")).toBe(0);
   });
 
   it("handles zero", () => {
@@ -175,5 +177,90 @@ describe("createOpeningBalanceTransaction", () => {
 
     const equityEntry = result.entries.find((e) => e.account_id === "equity");
     expect(equityEntry?.amount).toBe(-100000);
+  });
+});
+
+// --- computeAccountBalances ---
+
+describe("computeAccountBalances", () => {
+  const makeAccount = (id: string, initialBalance?: number): Account => ({
+    id,
+    name: id,
+    type: "checking",
+    currency: "BRL",
+    active: true,
+    initialBalance,
+  });
+
+  it("returns initialBalance when there are no entries", () => {
+    const accounts = [makeAccount("a1", 50000)];
+    const result = computeAccountBalances(accounts, []);
+    expect(result.get("a1")).toBe(50000);
+  });
+
+  it("sums initialBalance + entry amounts", () => {
+    const accounts = [makeAccount("a1", 10000)];
+    const entries: Entry[] = [
+      { id: "e1", transaction_id: "tx1", account_id: "a1", amount: 5000, currency: "BRL" },
+      { id: "e2", transaction_id: "tx2", account_id: "a1", amount: -2000, currency: "BRL" },
+    ];
+    const result = computeAccountBalances(accounts, entries);
+    expect(result.get("a1")).toBe(13000); // 10000 + 5000 - 2000
+  });
+
+  it("treats undefined initialBalance as zero", () => {
+    const accounts = [makeAccount("a1")]; // no initialBalance
+    const entries: Entry[] = [
+      { id: "e1", transaction_id: "tx1", account_id: "a1", amount: 3000, currency: "BRL" },
+    ];
+    const result = computeAccountBalances(accounts, entries);
+    expect(result.get("a1")).toBe(3000);
+  });
+
+  it("includes entries for accounts not in the accounts list", () => {
+    const accounts = [makeAccount("a1", 100)];
+    const entries: Entry[] = [
+      { id: "e1", transaction_id: "tx1", account_id: "unknown", amount: 7777, currency: "BRL" },
+    ];
+    const result = computeAccountBalances(accounts, entries);
+    expect(result.get("unknown")).toBe(7777);
+    expect(result.get("a1")).toBe(100);
+  });
+});
+
+// --- computeMonthlyExpenses ---
+
+describe("computeMonthlyExpenses", () => {
+  const makeExpense = (date: string, amount: number): Expense => ({
+    id: `exp-${date}-${amount}`,
+    date,
+    description: "Test",
+    account_id: "checking",
+    category_id: "food",
+    amount,
+    currency: "BRL",
+    created_at: "",
+  });
+
+  it("sums expenses within the target month", () => {
+    const expenses = [
+      makeExpense("2026-03-05", 5000),
+      makeExpense("2026-03-15", 3000),
+    ];
+    const total = computeMonthlyExpenses(expenses, "2026-03");
+    expect(total).toBe(8000);
+  });
+
+  it("ignores expenses from a different month", () => {
+    const expenses = [
+      makeExpense("2026-04-01", 3000),
+    ];
+    const total = computeMonthlyExpenses(expenses, "2026-03");
+    expect(total).toBe(0);
+  });
+
+  it("returns 0 when there are no expenses", () => {
+    const total = computeMonthlyExpenses([], "2026-03");
+    expect(total).toBe(0);
   });
 });

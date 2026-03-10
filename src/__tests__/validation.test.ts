@@ -3,11 +3,11 @@ import { AccountType } from "@/lib/domain/types";
 
 describe("validateAccount", () => {
   it("passes for valid account", () => {
-    expect(() => validateAccount({ name: "Checking", type: "asset", currency: "USD", active: true })).not.toThrow();
+    expect(() => validateAccount({ name: "Checking", type: "checking", currency: "USD", active: true })).not.toThrow();
   });
 
   it("throws when name is missing", () => {
-    expect(() => validateAccount({ name: "", type: "asset", currency: "USD" })).toThrow("Account name is required");
+    expect(() => validateAccount({ name: "", type: "checking", currency: "USD" })).toThrow("Account name is required");
   });
 
   it("throws for invalid account type", () => {
@@ -15,7 +15,7 @@ describe("validateAccount", () => {
   });
 
   it("throws when currency is missing", () => {
-    expect(() => validateAccount({ name: "Test", type: "asset", currency: "" })).toThrow("Account currency is required");
+    expect(() => validateAccount({ name: "Test", type: "checking", currency: "" })).toThrow("Account currency is required");
   });
 });
 

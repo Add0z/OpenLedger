@@ -1,4 +1,4 @@
-import { Entry, Transaction, TransactionWithEntries } from "./types";
+import { Account, Entry, Expense, Transaction, TransactionWithEntries } from "./types";
 import { v4 as uuidv4 } from "uuid";
 
 /**
@@ -38,7 +38,7 @@ export function createTransaction(
     const sum = fullEntries.reduce((acc, e) => acc + e.amount, 0);
     throw new Error(
       `Double-entry rule violation: entries sum to ${sum}, must equal 0. ` +
-        `User: ${userId}`
+      `User: ${userId}`
     );
   }
 
@@ -73,15 +73,37 @@ export function formatAmount(
 }
 
 /**
- * Parses a user-supplied decimal string into an integer amount in smallest unit.
- * e.g. "12.34" with decimals=2 → 1234
+ * Parses a user-supplied or spreadsheet decimal string into an integer amount in smallest unit.
+ * Safely handles localized formatting like "R$ 6.300,00", "-$ 1,234.56", or "-37,95".
  */
-export function parseAmount(input: string, decimals: number = 2): number {
-  const trimmed = input.trim().replace(/,/g, "");
-  const parsed = parseFloat(trimmed);
-  if (isNaN(parsed)) {
-    throw new Error(`Invalid amount: "${input}"`);
+export function parseAmount(input: string | number, decimals: number = 2): number {
+  if (typeof input === "number") {
+    return Math.round(input * Math.pow(10, decimals));
   }
+
+  // 1. Remove all non-numeric characters EXCEPT digits, minus sign, comma, and dot
+  const cleaned = input.replace(/[^\d.,-]/g, "");
+
+  // 2. Normalize the decimal separator to a dot, and remove thousands separators
+  // Find the LAST comma or dot. If there's none, it's an integer.
+  const lastCommaIndex = cleaned.lastIndexOf(",");
+  const lastDotIndex = cleaned.lastIndexOf(".");
+  let normalized = cleaned;
+
+  if (lastCommaIndex > -1 || lastDotIndex > -1) {
+    const lastSeparatorIndex = Math.max(lastCommaIndex, lastDotIndex);
+    // Everything before the last separator -> remove commas and dots
+    const intPart = cleaned.slice(0, lastSeparatorIndex).replace(/[.,]/g, "");
+    // Everything after -> decimal part
+    const decPart = cleaned.slice(lastSeparatorIndex + 1);
+    normalized = `${intPart}.${decPart}`;
+  }
+
+  const parsed = parseFloat(normalized);
+  if (isNaN(parsed)) {
+    return 0; // Return 0 instead of throwing, so it doesn't break the whole table rendering
+  }
+
   // Multiply by 10^decimals and round to avoid floating-point errors
   return Math.round(parsed * Math.pow(10, decimals));
 }
@@ -131,4 +153,48 @@ export function createOpeningBalanceTransaction(
   }
 
   return { transaction, entries };
+}
+
+/**
+ * Computes the current balance for each account.
+ * Balance = initialBalance + Σ(entry amounts) − Σ(expense amounts).
+ *
+ * Entries carry a sign (positive = money in, negative = money out).
+ * Expenses are always positive and are subtracted from the source account.
+ *
+ * Performance: single pass over each array — O(accounts + entries + expenses).
+ */
+export function computeAccountBalances(
+  accounts: Account[],
+  entries: Entry[],
+  expenses: Expense[] = []
+): Map<string, number> {
+  const balances = new Map<string, number>();
+  accounts.forEach((a) => balances.set(a.id, a.initialBalance ?? 0));
+  entries.forEach((e) => {
+    balances.set(e.account_id, (balances.get(e.account_id) ?? 0) + e.amount);
+  });
+  expenses.forEach((e) => {
+    balances.set(e.account_id, (balances.get(e.account_id) ?? 0) - e.amount);
+  });
+  return balances;
+}
+
+/**
+ * Computes total expenses for a given month.
+ * Filters expenses whose date falls within the specified yearMonth.
+ *
+ * @param expenses - all expense records
+ * @param yearMonth - format "YYYY-MM", e.g. "2026-03"
+ * @returns total expense amount (positive integer in smallest currency unit)
+ *
+ * Performance: single pass — O(expenses).
+ */
+export function computeMonthlyExpenses(
+  expenses: Expense[],
+  yearMonth: string
+): number {
+  return expenses
+    .filter((e) => e.date.startsWith(yearMonth) && e.amount > 0)
+    .reduce((sum, e) => sum + e.amount, 0);
 }

@@ -1,7 +1,7 @@
 // Core domain types for OpenLedger
 // All monetary amounts are stored as integers in the smallest currency unit (cents)
 
-export type AccountType = "asset" | "liability" | "income" | "expense" | "equity";
+export type AccountType = "savings" | "checking" | "investment";
 
 export interface Account {
   id: string;
@@ -9,6 +9,18 @@ export interface Account {
   type: AccountType;
   currency: string;
   active: boolean;
+  initialBalance?: number; // integer, in smallest currency unit (e.g. cents)
+}
+
+export interface Expense {
+  id: string;
+  date: string;           // YYYY-MM-DD
+  description: string;
+  account_id: string;     // which account the money came from
+  category_id: string;    // expense category (food, rent, etc.)
+  amount: number;         // integer, smallest currency unit (cents)
+  currency: string;
+  created_at: string;     // ISO timestamp
 }
 
 export interface Category {
