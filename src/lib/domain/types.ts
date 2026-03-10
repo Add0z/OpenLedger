@@ -27,7 +27,7 @@ export interface Category {
   id: string;
   name: string;
   parent: string;
-  type: "expense" | "income";
+  type: "expense" | "income" | "investment";
 }
 
 export interface Currency {

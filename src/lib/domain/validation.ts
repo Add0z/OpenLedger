@@ -48,7 +48,7 @@ export function validateExpense(expense: Partial<Expense>): void {
 /** Validates a Category object */
 export function validateCategory(category: Partial<Category>): void {
   requireField(category.name, "Category name");
-  if (!["expense", "income"].includes(category.type ?? "")) {
+  if (!["expense", "income", "investment"].includes(category.type ?? "")) {
     throw new Error(`Invalid category type: "${category.type}"`);
   }
 }

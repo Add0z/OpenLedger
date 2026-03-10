@@ -25,6 +25,7 @@ import FlashOnIcon from "@mui/icons-material/FlashOn";
 import SettingsIcon from "@mui/icons-material/Settings";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import MenuIcon from "@mui/icons-material/Menu";
+import CategoryIcon from "@mui/icons-material/Category";
 
 const DRAWER_WIDTH = 220;
 
@@ -34,6 +35,7 @@ const navItems = [
   { label: "Accounts", href: "/dashboard/accounts", icon: <AccountBalanceIcon /> },
   { label: "Budgets", href: "/dashboard/budgets", icon: <PieChartIcon /> },
   { label: "Reports", href: "/dashboard/reports", icon: <BarChartIcon /> },
+  { label: "Categories", href: "/dashboard/categories", icon: <CategoryIcon /> },
   { label: "Quick Add", href: "/dashboard/quickadd", icon: <FlashOnIcon /> },
   { label: "Import", href: "/dashboard/import", icon: <UploadFileIcon /> },
   { label: "Settings", href: "/dashboard/settings", icon: <SettingsIcon /> },

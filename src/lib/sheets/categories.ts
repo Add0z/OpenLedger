@@ -8,7 +8,7 @@ function rowToCategory(row: string[]): Category {
     id: row[0] ?? "",
     name: row[1] ?? "",
     parent: row[2] ?? "",
-    type: (row[3] ?? "expense") as "expense" | "income",
+    type: (row[3] ?? "expense") as "expense" | "income" | "investment",
   };
 }
 
