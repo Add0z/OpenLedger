@@ -27,12 +27,14 @@ import {
   Chip,
   Switch,
   FormControlLabel,
+  InputAdornment,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import { useSpreadsheet } from "@/components/layout/AppLayout";
 import { Account, AccountType } from "@/lib/domain/types";
+import { formatAmount } from "@/lib/domain/accounting";
 
-const ACCOUNT_TYPES: AccountType[] = ["asset", "liability", "income", "expense", "equity"];
+const ACCOUNT_TYPES: AccountType[] = ["savings", "checking", "investment"];
 
 export default function AccountsPage() {
   const { spreadsheetId } = useSpreadsheet();
@@ -42,9 +44,10 @@ export default function AccountsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({
     name: "",
-    type: "asset" as AccountType,
+    type: "checking" as AccountType,
     currency: "USD",
     active: true,
+    initialBalance: "",
   });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -76,7 +79,7 @@ export default function AccountsPage() {
         return;
       }
       setDialogOpen(false);
-      setForm({ name: "", type: "asset", currency: "USD", active: true });
+      setForm({ name: "", type: "checking", currency: "USD", active: true, initialBalance: "" });
       loadAccounts();
     } catch {
       setFormError("Failed to save account");
@@ -86,11 +89,9 @@ export default function AccountsPage() {
   };
 
   const typeColor: Record<AccountType, "primary" | "error" | "success" | "warning" | "default"> = {
-    asset: "primary",
-    liability: "error",
-    income: "success",
-    expense: "warning",
-    equity: "default",
+    checking: "primary",
+    savings: "success",
+    investment: "warning",
   };
 
   return (
@@ -124,6 +125,7 @@ export default function AccountsPage() {
                   <TableCell>Name</TableCell>
                   <TableCell>Type</TableCell>
                   <TableCell>Currency</TableCell>
+                  <TableCell>Initial Balance</TableCell>
                   <TableCell>Status</TableCell>
                 </TableRow>
               </TableHead>
@@ -149,6 +151,7 @@ export default function AccountsPage() {
                         />
                       </TableCell>
                       <TableCell>{a.currency}</TableCell>
+                      <TableCell>{formatAmount(a.initialBalance ?? 0, a.currency)}</TableCell>
                       <TableCell>
                         <Chip
                           label={a.active ? "Active" : "Inactive"}
@@ -196,6 +199,32 @@ export default function AccountsPage() {
               onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
               fullWidth
               inputProps={{ maxLength: 3 }}
+            />
+            <TextField
+              id="initial-balance-field"
+              label="Initial Balance"
+              value={form.initialBalance}
+              onChange={(e) => {
+                let val = e.target.value.replace(/\D/g, ""); // strip non-digits
+                if (!val) {
+                  setForm((f) => ({ ...f, initialBalance: "" }));
+                  return;
+                }
+                const num = parseInt(val, 10);
+                const formatted = (num / 100).toFixed(2);
+                setForm((f) => ({ ...f, initialBalance: formatted }));
+              }}
+              fullWidth
+              type="text"
+              placeholder="0.00"
+              helperText="Optional. The starting balance for this account."
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">{form.currency || "USD"}</InputAdornment>
+                  ),
+                },
+              }}
             />
             <FormControlLabel
               control={
