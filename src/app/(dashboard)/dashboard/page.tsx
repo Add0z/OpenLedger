@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Box,
   Grid,
@@ -17,29 +17,52 @@ import AddIcon from "@mui/icons-material/Add";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
+import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import Link from "next/link";
 import { useSpreadsheet } from "@/components/layout/AppLayout";
-import { Account, Transaction } from "@/lib/domain/types";
-import { formatAmount } from "@/lib/domain/accounting";
+import { Account, Transaction, Entry, Expense } from "@/lib/domain/types";
+import { formatAmount, computeAccountBalances, computeMonthlyExpenses } from "@/lib/domain/accounting";
 
 export default function DashboardPage() {
   const { spreadsheetId, spreadsheets } = useSpreadsheet();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Derive balances and monthly expenses from raw data — no duplicated state
+  const balanceMap = useMemo(
+    () => computeAccountBalances(accounts, entries, expenses),
+    [accounts, entries, expenses]
+  );
+
+  const currentYearMonth = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  }, []);
+
+  const monthlyExpenses = useMemo(
+    () => computeMonthlyExpenses(expenses, currentYearMonth),
+    [expenses, currentYearMonth]
+  );
 
   useEffect(() => {
     if (!spreadsheetId) return;
     const load = async () => {
       setLoading(true);
       try {
-        const [acctData, txData] = await Promise.all([
+        const [acctData, txData, entryData, expenseData] = await Promise.all([
           fetch(`/api/sheets/accounts?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
           fetch(`/api/sheets/transactions?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
+          fetch(`/api/sheets/entries?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
+          fetch(`/api/sheets/expenses?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
         ]);
         setAccounts(acctData.accounts ?? []);
         setTransactions(txData.transactions ?? []);
+        setEntries(entryData.entries ?? []);
+        setExpenses(expenseData.expenses ?? []);
       } catch {
         setError("Failed to load data");
       } finally {
@@ -49,7 +72,7 @@ export default function DashboardPage() {
     void load();
   }, [spreadsheetId]);
 
-  const assetAccounts = accounts.filter((a) => a.type === "asset" && a.active);
+  const activeAccounts = accounts.filter((a) => a.active);
   const recentTransactions = [...transactions]
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 5);
@@ -99,8 +122,28 @@ export default function DashboardPage() {
         </Box>
       ) : (
         <Grid container spacing={3}>
+          {/* Monthly expenses summary card */}
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+            <Card sx={{ bgcolor: "error.50", borderLeft: 4, borderColor: "error.main" }}>
+              <CardContent>
+                <Stack direction="row" alignItems="center" spacing={1} mb={1}>
+                  <ReceiptLongIcon color="error" fontSize="small" />
+                  <Typography variant="subtitle2" color="text.secondary">
+                    Gastos do Mês
+                  </Typography>
+                </Stack>
+                <Typography variant="h5" fontWeight={700} color="error.main">
+                  {formatAmount(monthlyExpenses, accounts[0]?.currency ?? "BRL")}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {currentYearMonth}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+
           {/* Account balance cards */}
-          {assetAccounts.map((account) => (
+          {activeAccounts.map((account) => (
             <Grid size={{ xs: 12, sm: 6, md: 4 }} key={account.id}>
               <Card>
                 <CardContent>
@@ -111,7 +154,7 @@ export default function DashboardPage() {
                     </Typography>
                   </Stack>
                   <Typography variant="h5" fontWeight={700}>
-                    {formatAmount(0, account.currency)}
+                    {formatAmount(balanceMap.get(account.id) ?? 0, account.currency)}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     {account.currency} · {account.type}

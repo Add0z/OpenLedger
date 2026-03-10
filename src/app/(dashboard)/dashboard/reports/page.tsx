@@ -22,14 +22,15 @@ import {
   Grid,
 } from "@mui/material";
 import { useSpreadsheet } from "@/components/layout/AppLayout";
-import { Account, Entry, Transaction, Budget, Category } from "@/lib/domain/types";
-import { formatAmount } from "@/lib/domain/accounting";
+import { Account, Entry, Transaction, Budget, Category, Expense } from "@/lib/domain/types";
+import { formatAmount, computeAccountBalances } from "@/lib/domain/accounting";
 
 interface ReportData {
   accountBalances: Array<{ account: Account; balance: number }>;
   monthlySpending: Array<{ month: string; amount: number }>;
   categoryBreakdown: Array<{ category: Category; amount: number }>;
   budgetVsActual: Array<{ budget: Budget; category: Category; spent: number }>;
+  cashflow: Array<{ month: string; inflow: number; outflow: number; net: number }>;
 }
 
 export default function ReportsPage() {
@@ -44,77 +45,76 @@ export default function ReportsPage() {
     const load = async () => {
       setLoading(true);
       try {
-        const [acctData, entryData, txData, budgetData, catData] = await Promise.all([
+        const [acctData, entryData, txData, budgetData, catData, expenseData] = await Promise.all([
           fetch(`/api/sheets/accounts?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
           fetch(`/api/sheets/entries?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
           fetch(`/api/sheets/transactions?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
           fetch(`/api/sheets/budgets?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
           fetch(`/api/sheets/categories?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
+          fetch(`/api/sheets/expenses?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
         ]);
         const accounts: Account[] = acctData.accounts ?? [];
         const entries: Entry[] = entryData.entries ?? [];
         const transactions: Transaction[] = txData.transactions ?? [];
         const budgets: Budget[] = budgetData.budgets ?? [];
         const categories: Category[] = catData.categories ?? [];
+        const expenses: Expense[] = expenseData.expenses ?? [];
 
-        // Build transaction date lookup
-        const txDateMap = new Map<string, string>(
-          transactions.map((tx) => [tx.id, tx.date])
-        );
-
-        // Account balances (sum entries per account)
-        const balanceMap = new Map<string, number>();
-        entries.forEach((e) => {
-          balanceMap.set(e.account_id, (balanceMap.get(e.account_id) ?? 0) + e.amount);
-        });
+        // Account balances (initialBalance + entries)
+        const balanceMapResult = computeAccountBalances(accounts, entries);
         const accountBalances = accounts
           .filter((a) => a.active)
-          .map((account) => ({ account, balance: balanceMap.get(account.id) ?? 0 }));
+          .map((account) => ({ account, balance: balanceMapResult.get(account.id) ?? 0 }));
 
-        // Monthly spending (expense entries grouped by month)
-        const expenseAccountIds = new Set(
-          accounts.filter((a) => a.type === "expense").map((a) => a.id)
-        );
+        // Monthly spending (from expenses table, grouped by month)
         const monthlyMap = new Map<string, number>();
-        entries.forEach((e) => {
-          if (!expenseAccountIds.has(e.account_id)) return;
-          const date = txDateMap.get(e.transaction_id) ?? "";
-          const month = date.slice(0, 7);
+        expenses.forEach((e) => {
+          const month = e.date.slice(0, 7);
           if (month.startsWith(String(selectedYear))) {
-            monthlyMap.set(month, (monthlyMap.get(month) ?? 0) + Math.abs(e.amount));
+            monthlyMap.set(month, (monthlyMap.get(month) ?? 0) + e.amount);
           }
         });
         const monthlySpending = Array.from(monthlyMap.entries())
           .map(([month, amount]) => ({ month, amount }))
           .sort((a, b) => a.month.localeCompare(b.month));
 
-        // Category breakdown (expense entries by category account name)
-        const categoryBreakdown: Array<{ category: Category; amount: number }> = [];
-        categories.forEach((cat) => {
-          const catAccount = accounts.find((a) => a.name === cat.name);
-          if (!catAccount) return;
-          const spent = entries
-            .filter((e) => e.account_id === catAccount.id)
-            .reduce((sum, e) => sum + Math.abs(e.amount), 0);
-          if (spent > 0) categoryBreakdown.push({ category: cat, amount: spent });
+        // Category breakdown (expenses grouped by category_id)
+        const catMap = new Map<string, number>();
+        expenses.forEach((e) => {
+          if (e.date.startsWith(String(selectedYear))) {
+            catMap.set(e.category_id, (catMap.get(e.category_id) ?? 0) + e.amount);
+          }
         });
+        const categoryBreakdown: Array<{ category: Category; amount: number }> = [];
+        catMap.forEach((amount, catId) => {
+          const category = categories.find((c) => c.id === catId);
+          if (category) categoryBreakdown.push({ category, amount });
+        });
+        categoryBreakdown.sort((a, b) => b.amount - a.amount);
 
-        // Budget vs Actual
+        // Budget vs Actual (using expenses)
         const budgetVsActual = budgets.map((b) => {
           const category = categories.find((c) => c.id === b.category_id);
-          const catAccount = accounts.find((a) => a.name === category?.name);
-          const spent = catAccount
-            ? entries
-                .filter((e) => {
-                  const date = txDateMap.get(e.transaction_id) ?? "";
-                  return e.account_id === catAccount.id && date.startsWith(b.period);
-                })
-                .reduce((sum, e) => sum + Math.abs(e.amount), 0)
-            : 0;
+          const spent = expenses
+            .filter((e) => e.category_id === b.category_id && e.date.startsWith(b.period))
+            .reduce((sum, e) => sum + e.amount, 0);
           return { budget: b, category: category ?? { id: b.category_id, name: b.category_id, parent: "", type: "expense" as const }, spent };
         });
 
-        setReportData({ accountBalances, monthlySpending, categoryBreakdown, budgetVsActual });
+        // Cashflow: outflows from expenses by month (income tracking not yet implemented)
+        const cashflowMap = new Map<string, { inflow: number; outflow: number }>();
+        expenses.forEach((e) => {
+          const month = e.date.slice(0, 7);
+          if (!month.startsWith(String(selectedYear))) return;
+          const bucket = cashflowMap.get(month) ?? { inflow: 0, outflow: 0 };
+          bucket.outflow += e.amount;
+          cashflowMap.set(month, bucket);
+        });
+        const cashflow = Array.from(cashflowMap.entries())
+          .map(([month, { inflow, outflow }]) => ({ month, inflow, outflow, net: inflow - outflow }))
+          .sort((a, b) => a.month.localeCompare(b.month));
+
+        setReportData({ accountBalances, monthlySpending, categoryBreakdown, budgetVsActual, cashflow });
       } catch {
         setError("Failed to load report data");
       } finally {
@@ -262,6 +262,65 @@ export default function ReportsPage() {
                           </TableRow>
                         );
                       })
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Cashflow */}
+          <Grid size={{ xs: 12 }}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" fontWeight={600} mb={2}>
+                  Cashflow ({selectedYear})
+                </Typography>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Month</TableCell>
+                      <TableCell align="right">Inflow</TableCell>
+                      <TableCell align="right">Outflow</TableCell>
+                      <TableCell align="right">Net</TableCell>
+                      <TableCell align="right">Cumulative</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {reportData.cashflow.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} align="center">
+                          <Typography color="text.secondary" variant="body2">No cashflow data</Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      (() => {
+                        let cumulative = 0;
+                        return reportData.cashflow.map(({ month, inflow, outflow, net }) => {
+                          cumulative += net;
+                          return (
+                            <TableRow key={month}>
+                              <TableCell>{month}</TableCell>
+                              <TableCell align="right">
+                                <Typography color="success.main">{formatAmount(inflow, "USD")}</Typography>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Typography color="error.main">{formatAmount(outflow, "USD")}</Typography>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Typography color={net >= 0 ? "success.main" : "error.main"}>
+                                  {formatAmount(net, "USD")}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Typography fontWeight={600} color={cumulative >= 0 ? "success.main" : "error.main"}>
+                                  {formatAmount(cumulative, "USD")}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        });
+                      })()
                     )}
                   </TableBody>
                 </Table>
