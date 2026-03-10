@@ -31,16 +31,21 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import InfoIcon from "@mui/icons-material/Info";
 import { useSpreadsheet } from "@/components/layout/AppLayout";
-import { Account, Transaction, Entry } from "@/lib/domain/types";
+import { Account, Transaction, Entry, Expense } from "@/lib/domain/types";
 import { formatAmount, parseAmount } from "@/lib/domain/accounting";
 
 interface TransactionRow extends Transaction {
   entries: Entry[];
 }
 
+type MovementRow =
+  | { kind: "transaction"; data: TransactionRow }
+  | { kind: "expense"; data: Expense };
+
 export default function TransactionsPage() {
   const { spreadsheetId } = useSpreadsheet();
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -67,21 +72,33 @@ export default function TransactionsPage() {
       fetch(`/api/sheets/transactions?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
       fetch(`/api/sheets/entries?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
       fetch(`/api/sheets/accounts?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
+      fetch(`/api/sheets/expenses?spreadsheetId=${spreadsheetId}`).then((r) => r.json()),
     ])
-      .then(([txData, entryData, acctData]) => {
+      .then(([txData, entryData, acctData, expenseData]) => {
         const entries: Entry[] = entryData.entries ?? [];
         const txRows: TransactionRow[] = (txData.transactions ?? []).map((tx: Transaction) => ({
           ...tx,
           entries: entries.filter((e) => e.transaction_id === tx.id),
         }));
-        setTransactions(txRows.sort((a, b) => b.date.localeCompare(a.date)));
+        setTransactions(txRows);
         setAccounts(acctData.accounts ?? []);
+        setExpenses(expenseData.expenses ?? []);
       })
-      .catch(() => setError("Failed to load transactions"))
+      .catch(() => setError("Failed to load data"))
       .finally(() => setLoading(false));
   };
 
   useEffect(loadData, [spreadsheetId]);
+
+  // Merge transactions + expenses into a unified sorted list
+  const movements: MovementRow[] = [
+    ...transactions.map((t): MovementRow => ({ kind: "transaction", data: t })),
+    ...expenses.map((e): MovementRow => ({ kind: "expense", data: e })),
+  ].sort((a, b) => {
+    const dateA = a.kind === "transaction" ? a.data.date : a.data.date;
+    const dateB = b.kind === "transaction" ? b.data.date : b.data.date;
+    return dateB.localeCompare(dateA);
+  });
 
   const handleSubmit = async () => {
     setFormError("");
@@ -89,8 +106,8 @@ export default function TransactionsPage() {
     try {
       const amount = parseAmount(form.amount);
       const entries = [
-        { account_id: form.debitAccountId, amount: -amount, currency: form.currency },
-        { account_id: form.creditAccountId, amount: amount, currency: form.currency },
+        { account_id: form.debitAccountId, amount: amount, currency: form.currency },
+        { account_id: form.creditAccountId, amount: -amount, currency: form.currency },
       ];
       setSaving(true);
       const res = await fetch(`/api/sheets/transactions?spreadsheetId=${spreadsheetId}`, {
@@ -131,7 +148,7 @@ export default function TransactionsPage() {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" fontWeight={700}>
-          Transactions
+          Movements
         </Typography>
         <Button
           variant="contained"
@@ -157,49 +174,99 @@ export default function TransactionsPage() {
                 <TableRow>
                   <TableCell>Date</TableCell>
                   <TableCell>Description</TableCell>
-                  <TableCell>Entries</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell>Account(s)</TableCell>
+                  <TableCell align="right">Amount</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {transactions.length === 0 ? (
+                {movements.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} align="center">
+                    <TableCell colSpan={6} align="center">
                       <Typography color="text.secondary" py={3}>
-                        No transactions yet
+                        No movements yet
                       </Typography>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  transactions.map((tx) => (
-                    <TableRow key={tx.id} hover>
-                      <TableCell>{tx.date}</TableCell>
-                      <TableCell>{tx.description}</TableCell>
-                      <TableCell>
-                        <Stack direction="row" spacing={0.5} flexWrap="wrap" gap={0.5}>
-                          {tx.entries.map((e) => (
+                  movements.map((m) => {
+                    if (m.kind === "expense") {
+                      const exp = m.data;
+                      const isIncome = exp.amount < 0;
+                      return (
+                        <TableRow key={exp.id} hover>
+                          <TableCell>{exp.date}</TableCell>
+                          <TableCell>{exp.description}</TableCell>
+                          <TableCell>
                             <Chip
-                              key={e.id}
                               size="small"
-                              label={`${getAccountName(e.account_id)}: ${formatAmount(e.amount, e.currency)}`}
-                              color={e.amount >= 0 ? "success" : "error"}
+                              label={isIncome ? "Income" : "Expense"}
+                              color={isIncome ? "success" : "error"}
                               variant="outlined"
                             />
-                          ))}
-                        </Stack>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Tooltip title="View details">
-                          <IconButton
-                            size="small"
-                            onClick={() => setDetailTx(tx)}
-                          >
-                            <InfoIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="small" label={getAccountName(exp.account_id)} variant="filled" />
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography
+                              color={isIncome ? "success.main" : "error.main"}
+                              fontWeight={600}
+                            >
+                              {formatAmount(isIncome ? Math.abs(exp.amount) : -exp.amount, exp.currency)}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            {/* No actions for expenses yet */}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    } else {
+                      const tx = m.data;
+                      // Find the positive amount (the transferred amount)
+                      const transferAmount = tx.entries.find(e => e.amount > 0)?.amount ?? 0;
+                      const currency = tx.entries[0]?.currency ?? "USD";
+
+                      return (
+                        <TableRow key={tx.id} hover>
+                          <TableCell>{tx.date}</TableCell>
+                          <TableCell>{tx.description}</TableCell>
+                          <TableCell>
+                            <Chip size="small" label="Transfer" color="primary" variant="outlined" />
+                          </TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.5} flexWrap="wrap" gap={0.5}>
+                              {tx.entries.map((e) => (
+                                <Chip
+                                  key={e.id}
+                                  size="small"
+                                  label={getAccountName(e.account_id)}
+                                  color={e.amount >= 0 ? "success" : "error"}
+                                  variant="outlined"
+                                />
+                              ))}
+                            </Stack>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography fontWeight={600} color="text.secondary">
+                              {formatAmount(transferAmount, currency)}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Tooltip title="View details">
+                              <IconButton
+                                size="small"
+                                onClick={() => setDetailTx(tx)}
+                              >
+                                <InfoIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+                  })
                 )}
               </TableBody>
             </Table>
