@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Box,
   Typography,
@@ -29,6 +29,7 @@ import { useSpreadsheet } from "@/components/layout/AppLayout";
 import { parseOFX, ParsedImportTransaction } from "@/lib/import/ofx";
 import { parseCSV, CSVColumnMapping } from "@/lib/import/csv";
 import { formatAmount } from "@/lib/domain/accounting";
+import { Account } from "@/lib/domain/types";
 
 const STEPS = ["Upload File", "Preview & Map", "Import"];
 
@@ -55,6 +56,15 @@ export default function ImportPage() {
 
   // Account mapping
   const [debitAccountId, setDebitAccountId] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
+
+  useEffect(() => {
+    if (!spreadsheetId) return;
+    fetch(`/api/sheets/accounts?spreadsheetId=${spreadsheetId}`)
+      .then((r) => r.json())
+      .then((data) => setAccounts(data.accounts ?? []))
+      .catch(() => { });
+  }, [spreadsheetId]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -81,31 +91,30 @@ export default function ImportPage() {
   };
 
   const handleImport = async () => {
-    if (!spreadsheetId || parsed.length === 0) return;
+    if (!spreadsheetId || parsed.length === 0 || !debitAccountId) return;
     setImporting(true);
     let success = 0;
     let errors = 0;
 
     for (const tx of parsed) {
       try {
-        const entries = [
-          { account_id: debitAccountId || "unknown", amount: tx.amount, currency: tx.currency },
-          { account_id: "equity", amount: -tx.amount, currency: tx.currency },
-        ];
-        const res = await fetch(`/api/sheets/transactions?spreadsheetId=${spreadsheetId}`, {
+        // All OFX lines become expenses:
+        //   Debit (TRNAMT < 0): amount positive → balance decreases (expense)
+        //   Credit (TRNAMT > 0): amount negative → balance increases (income)
+        const res = await fetch(`/api/sheets/expenses?spreadsheetId=${spreadsheetId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             date: tx.date,
             description: tx.description,
-            entries,
+            account_id: debitAccountId,
+            category_id: "uncategorized",
+            amount: -tx.amount, // negate: OFX credit (+) → negative expense, OFX debit (-) → positive expense
+            currency: tx.currency,
           }),
         });
-        if (res.ok) {
-          success++;
-        } else {
-          errors++;
-        }
+        if (res.ok) success++;
+        else errors++;
       } catch {
         errors++;
       }
@@ -137,7 +146,22 @@ export default function ImportPage() {
           <CardContent>
             <Typography variant="h6" mb={2}>Upload File</Typography>
             <Stack spacing={3}>
-              <FormControl sx={{ maxWidth: 200 }}>
+              <FormControl sx={{ maxWidth: 300 }}>
+                <InputLabel>Target Account</InputLabel>
+                <Select
+                  value={debitAccountId}
+                  label="Target Account"
+                  onChange={(e) => setDebitAccountId(e.target.value)}
+                >
+                  {accounts.filter((a) => a.active).map((a) => (
+                    <MenuItem key={a.id} value={a.id}>
+                      {a.name} ({a.type})
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl sx={{ maxWidth: 300 }}>
                 <InputLabel>File Type</InputLabel>
                 <Select
                   value={fileType}
@@ -199,6 +223,7 @@ export default function ImportPage() {
                   variant="contained"
                   component="label"
                   startIcon={<UploadFileIcon />}
+                  disabled={!debitAccountId}
                 >
                   Choose File
                   <input
@@ -234,18 +259,9 @@ export default function ImportPage() {
             </Stack>
 
             <Alert severity="info" sx={{ mb: 2 }}>
-              Each transaction will create 2 journal entries (double-entry bookkeeping).
-              Assign the target account below.
+              Credits (positive amounts) will create transaction entries to increase your account balance.
+              Debits (negative amounts) will create expense records that decrease the balance.
             </Alert>
-
-            <TextField
-              label="Target Account ID (debit)"
-              value={debitAccountId}
-              onChange={(e) => setDebitAccountId(e.target.value)}
-              fullWidth
-              sx={{ mb: 2 }}
-              helperText="Enter the account ID to debit/credit for imports"
-            />
 
             <Table size="small">
               <TableHead>
